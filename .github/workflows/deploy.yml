@@ -1,14 +1,70 @@
+---
 name: CD — Déploiement AWS
+
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+
 env:
   AWS_REGION: eu-west-3
   EC2_HOST: ${{ secrets.EC2_HOST }}
+
 jobs:
-  deploy:
-    name: Déploiement sur AWS EC2
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — Validation Statique (Linting)
+  # ─────────────────────────────────────────────
+  validate:
+    name: Validation Statique (Linting)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Validation Syntaxe YAML
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: .github/workflows/
+
+      - name: Validation des Dockerfiles (Hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          ignore: 'DL3008'
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Sécurité & Audit DevSecOps
+  # ─────────────────────────────────────────────
+  security-audit:
+    name: Audit Sécurité & Scan des Secrets
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan anti-fuite de Secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan de Sécurité IaC
+        uses: bridgecrewio/checkov-action@master
+        with:
+          framework: dockerfile
+          output_format: cli
+          soft_fail: false
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — Build Applicatif unique
+  # ─────────────────────────────────────────────
+  build:
+    name: Compilation & Tests Java
+    runs-on: ubuntu-latest
+    needs: security-audit
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -23,23 +79,61 @@ jobs:
       - name: Package Maven
         run: mvn clean package -DskipTests
 
+      - name: Archivage des Artéfacts compilés
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-services-jars
+          path: |
+            **/target/*.jar
+            !target/*.jar
+
+  # ─────────────────────────────────────────────
+  # JOB 4 — Construction Images Docker
+  # ─────────────────────────────────────────────
+  docker-build:
+    name: Build & Push Images Docker
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Récupération des JARs compilés
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-services-jars
+
       - name: Login Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build & Push toutes les images
+      - name: Build & Push Loop
         run: |
-          services=("auth-service" "api-gateway" "erp-service" "crm-service" "supply-chain-service" "bi-service")
+          services=("auth-service" "api-gateway" "erp-service" \
+            "crm-service" "supply-chain-service" "bi-service")
           tags=("auth" "gateway" "erp" "crm" "scm" "bi")
+          
           for i in "${!services[@]}"; do
-            echo "Building ${services[$i]}..."
-            docker build -t ${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest ./${services[$i]}
-            docker push ${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest
+            img="${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest"
+            echo "Building $img..."
+            docker build -t "$img" "./${services[$i]}"
+            docker push "$img"
           done
 
-      - name: Déploiement sur EC2 via SSH
+  # ─────────────────────────────────────────────
+  # JOB 5 — Déploiement sur AWS EC2
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Déploiement sur AWS EC2
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Déploiement via SSH sur EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -47,18 +141,21 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu/digitrans-cm
-            # Pull nouvelles images
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-auth:latest
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-gateway:latest
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-erp:latest
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-crm:latest
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-scm:latest
-            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-bi:latest
-            # Redémarre les conteneurs
+            echo "${{ secrets.DOCKER_PASSWORD }}" | \
+              docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+            
+            services_tags=("auth" "gateway" "erp" "crm" "scm" "bi")
+            for tag in "${services_tags[@]}"; do
+              docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-${tag}:latest
+            done
+            
             docker compose down
-            docker compose up -d
-            echo " Déploiement DIGITRANS-CM terminé"
+            docker compose up -d --remove-orphans
+            docker image prune -f
 
+  # ─────────────────────────────────────────────
+  # JOB 6 — Notifications
+  # ─────────────────────────────────────────────
   notify:
     name: Notification déploiement
     runs-on: ubuntu-latest
@@ -68,8 +165,8 @@ jobs:
       - name: Statut du déploiement
         run: |
           if [ "${{ needs.deploy.result }}" == "success" ]; then
-            echo " Déploiement DIGITRANS-CM réussi sur AWS eu-west-3"
+            echo "Déploiement réussi sur AWS"
           else
-            echo " Échec du déploiement DIGITRANS-CM"
+            echo "Échec critique du déploiement"
             exit 1
           fi
