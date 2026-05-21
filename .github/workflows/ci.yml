@@ -1,14 +1,7 @@
 ---
 name: CI/CD — Build, Test & Deploy
 
-on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
+on: [push, pull_request]
 
 env:
   AWS_REGION: eu-west-3
@@ -221,7 +214,7 @@ jobs:
             docker compose down
             docker compose up -d --remove-orphans
             docker image prune -f
-            echo "Déploiement terminé"
+            echo "Déploiement achevé"
 
   # ─────────────────────────────────────────────
   # JOB 6 — Notification déploiement
@@ -230,12 +223,12 @@ jobs:
     name: Notification déploiement
     runs-on: ubuntu-latest
     needs: deploy
-    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: always() && github.ref == 'refs/heads/main'
 
     steps:
       - name: Notification succès
         if: needs.deploy.result == 'success'
-        run: echo "Succès sur AWS EC2 eu-west-3"
+        run: echo "Succès sur AWS EC2"
 
       - name: Notification échec
         if: needs.deploy.result == 'failure'

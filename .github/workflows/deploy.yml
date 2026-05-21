@@ -1,10 +1,7 @@
 ---
 name: CD — Déploiement AWS
 
-on:
-  push:
-    branches:
-      - main
+on: [push]
 
 env:
   AWS_REGION: eu-west-3
@@ -114,7 +111,6 @@ jobs:
           services=("auth-service" "api-gateway" "erp-service" \
             "crm-service" "supply-chain-service" "bi-service")
           tags=("auth" "gateway" "erp" "crm" "scm" "bi")
-          
           for i in "${!services[@]}"; do
             img="${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest"
             echo "Building $img..."
@@ -143,12 +139,10 @@ jobs:
             cd /home/ubuntu/digitrans-cm
             echo "${{ secrets.DOCKER_PASSWORD }}" | \
               docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-            
             services_tags=("auth" "gateway" "erp" "crm" "scm" "bi")
             for tag in "${services_tags[@]}"; do
               docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-${tag}:latest
             done
-            
             docker compose down
             docker compose up -d --remove-orphans
             docker image prune -f
