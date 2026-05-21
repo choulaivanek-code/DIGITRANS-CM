@@ -1,18 +1,14 @@
 name: CD — Déploiement AWS
-
 on:
   push:
     branches: [ main ]
-
 env:
-  AWS_REGION: af-south-1
+  AWS_REGION: eu-west-3
   EC2_HOST: ${{ secrets.EC2_HOST }}
-
 jobs:
   deploy:
     name: Déploiement sur AWS EC2
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -26,13 +22,6 @@ jobs:
 
       - name: Package Maven
         run: mvn clean package -DskipTests
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login Docker Hub
         uses: docker/login-action@v3
@@ -58,7 +47,6 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu/digitrans-cm
-
             # Pull nouvelles images
             docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-auth:latest
             docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-gateway:latest
@@ -66,25 +54,22 @@ jobs:
             docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-crm:latest
             docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-scm:latest
             docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-bi:latest
-
             # Redémarre les conteneurs
-            docker-compose down
-            docker-compose up -d
-
-            echo "✅ Déploiement DIGITRANS-CM terminé"
+            docker compose down
+            docker compose up -d
+            echo " Déploiement DIGITRANS-CM terminé"
 
   notify:
     name: Notification déploiement
     runs-on: ubuntu-latest
     needs: deploy
     if: always()
-
     steps:
       - name: Statut du déploiement
         run: |
           if [ "${{ needs.deploy.result }}" == "success" ]; then
-            echo "✅ Déploiement DIGITRANS-CM réussi sur AWS af-south-1"
+            echo " Déploiement DIGITRANS-CM réussi sur AWS eu-west-3"
           else
-            echo "❌ Échec du déploiement DIGITRANS-CM"
+            echo " Échec du déploiement DIGITRANS-CM"
             exit 1
           fi
