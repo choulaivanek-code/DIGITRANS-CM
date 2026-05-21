@@ -1,7 +1,7 @@
 ---
 name: CD — Déploiement AWS
 
-on:
+"on":
   push:
 
 env:
@@ -16,6 +16,7 @@ jobs:
   validate:
     name: Validation Statique (Linting)
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -38,6 +39,7 @@ jobs:
     name: Audit Sécurité & Scan des Secrets
     runs-on: ubuntu-latest
     needs: validate
+
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -63,6 +65,7 @@ jobs:
     name: Compilation & Tests Java
     runs-on: ubuntu-latest
     needs: security-audit
+
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -92,6 +95,7 @@ jobs:
     name: Build & Push Images Docker
     runs-on: ubuntu-latest
     needs: build
+
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -111,10 +115,14 @@ jobs:
         run: |
           services=("auth-service" "api-gateway" "erp-service" \
             "crm-service" "supply-chain-service" "bi-service")
+
           tags=("auth" "gateway" "erp" "crm" "scm" "bi")
+
           for i in "${!services[@]}"; do
             img="${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest"
+
             echo "Building $img..."
+
             docker build -t "$img" "./${services[$i]}"
             docker push "$img"
           done
@@ -126,6 +134,7 @@ jobs:
     name: Déploiement sur AWS EC2
     runs-on: ubuntu-latest
     needs: docker-build
+
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -138,12 +147,16 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu/digitrans-cm
+
             echo "${{ secrets.DOCKER_PASSWORD }}" | \
               docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
             services_tags=("auth" "gateway" "erp" "crm" "scm" "bi")
+
             for tag in "${services_tags[@]}"; do
               docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-${tag}:latest
             done
+
             docker compose down
             docker compose up -d --remove-orphans
             docker image prune -f
@@ -156,6 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy
     if: always()
+
     steps:
       - name: Statut du déploiement
         run: |
