@@ -1,4 +1,4 @@
-name: CI — Build & Test
+name: CI/CD — Build, Test & Deploy
 
 on:
   push:
@@ -6,11 +6,32 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  AWS_REGION: eu-west-3
+
 jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — Validation & Linting (Niveau 1)
+  # ─────────────────────────────────────────────
+  validate:
+    name: Validation Statique & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Validation Syntaxe YAML
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: .github/workflows/
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Build & Tests Applicatifs
+  # ─────────────────────────────────────────────
   build:
     name: Build & Test tous les services
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
@@ -22,69 +43,99 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Build complet Maven
-        run: mvn clean compile -DskipTests
+      # Exécution des tests unitaires (Retrait du -DskipTests pour valider le code)
+      - name: Build et Tests Unitaires Maven
+        run: mvn clean package
 
-      - name: Tests unitaires
-        run: mvn test
-
-      - name: Package tous les services
-        run: mvn clean package -DskipTests
-
-      - name: Upload artifacts auth-service
+      # Téléversement des JARs pour le job Docker (évite de re-compiler)
+      - name: Upload artifact — auth-service
         uses: actions/upload-artifact@v4
         with:
           name: auth-service-jar
           path: auth-service/target/*.jar
 
-      - name: Upload artifacts api-gateway
+      - name: Upload artifact — api-gateway
         uses: actions/upload-artifact@v4
         with:
           name: api-gateway-jar
           path: api-gateway/target/*.jar
 
-      - name: Upload artifacts erp-service
+      - name: Upload artifact — erp-service
         uses: actions/upload-artifact@v4
         with:
           name: erp-service-jar
           path: erp-service/target/*.jar
 
-      - name: Upload artifacts crm-service
+      - name: Upload artifact — crm-service
         uses: actions/upload-artifact@v4
         with:
           name: crm-service-jar
           path: crm-service/target/*.jar
 
-      - name: Upload artifacts supply-chain-service
+      - name: Upload artifact — supply-chain-service
         uses: actions/upload-artifact@v4
         with:
           name: supply-chain-jar
           path: supply-chain-service/target/*.jar
 
-      - name: Upload artifacts bi-service
+      - name: Upload artifact — bi-service
         uses: actions/upload-artifact@v4
         with:
           name: bi-service-jar
           path: bi-service/target/*.jar
 
-  docker-build:
-    name: Build Images Docker
+  # ─────────────────────────────────────────────
+  # JOB 3 — Sécurité, Audit & Conformité (DevSecOps)
+  # ─────────────────────────────────────────────
+  security-audit:
+    name: Audit Sécurité & Scan des Secrets
     runs-on: ubuntu-latest
-    needs: build
+    needs: validate
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Requis pour le scan d'historique complet par Gitleaks
+
+      # Étape indispensable pour bloquer le pipeline en cas de fuite accidentelle de mot de passe/clé
+      - name: Scan des Secrets (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Scan IaC (Checkov) recommandé pour détecter les vulnérabilités de configuration
+      - name: Scan de Sécurité IaC / Docker (Checkov)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          framework: dockerfile
+          output_format: cli
+          soft_fail: true # Permet de ne pas bloquer si vous gérez des exceptions
+
+  # ─────────────────────────────────────────────
+  # JOB 4 — Build & Push Images Docker
+  # ─────────────────────────────────────────────
+  docker-build:
+    name: Build & Push Images Docker
+    runs-on: ubuntu-latest
+    needs: [build, security-audit] # S'exécute uniquement si le build ET la sécurité passent
 
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+      # Téléchargement des Artifacts JAR générés au Job 2 (Gain de temps et d'énergie)
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
 
-      - name: Package Maven
-        run: mvn clean package -DskipTests
+      # Déplacement des JARs téléchargés vers leurs dossiers cibles respectifs pour Docker
+      - name: Préparer les contextes Docker
+        run: |
+          mkdir -p auth-service/target/ && cp auth-service-jar/*.jar auth-service/target/
+          mkdir -p api-gateway/target/ && cp api-gateway-jar/*.jar api-gateway/target/
+          mkdir -p erp-service/target/ && cp erp-service-jar/*.jar erp-service/target/
+          mkdir -p crm-service/target/ && cp crm-service-jar/*.jar crm-service/target/
+          mkdir -p supply-chain-service/target/ && cp supply-chain-jar/*.jar supply-chain-service/target/
+          mkdir -p bi-service/target/ && cp bi-service-jar/*.jar bi-service/target/
 
       - name: Login Docker Hub
         uses: docker/login-action@v3
@@ -92,44 +143,107 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build & Push auth-service
+      - name: Build & Push — auth-service
         uses: docker/build-push-action@v5
         with:
           context: ./auth-service
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-auth:latest
 
-      - name: Build & Push api-gateway
+      - name: Build & Push — api-gateway
         uses: docker/build-push-action@v5
         with:
           context: ./api-gateway
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-gateway:latest
 
-      - name: Build & Push erp-service
+      - name: Build & Push — erp-service
         uses: docker/build-push-action@v5
         with:
           context: ./erp-service
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-erp:latest
 
-      - name: Build & Push crm-service
+      - name: Build & Push — crm-service
         uses: docker/build-push-action@v5
         with:
           context: ./crm-service
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-crm:latest
 
-      - name: Build & Push supply-chain-service
+      - name: Build & Push — supply-chain-service
         uses: docker/build-push-action@v5
         with:
           context: ./supply-chain-service
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-scm:latest
 
-      - name: Build & Push bi-service
+      - name: Build & Push — bi-service
         uses: docker/build-push-action@v5
         with:
           context: ./bi-service
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/digitrans-bi:latest
+
+  # ─────────────────────────────────────────────
+  # JOB 5 — Déploiement sur AWS EC2
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Déploiement sur AWS EC2
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Déploiement via SSH sur EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/digitrans-cm
+
+            # Se connecter à Docker Hub
+            echo "${{ secrets.DOCKER_PASSWORD }}" | \
+              docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            # Pull les nouvelles images
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-auth:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-gateway:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-erp:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-crm:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-scm:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-bi:latest
+
+            # Redémarrer les services
+            docker compose down
+            docker compose up -d --remove-orphans
+
+            # Nettoyer les anciennes images
+            docker image prune -f
+
+            echo " Déploiement DIGITRANS-CM terminé sur eu-west-3"
+
+  # ─────────────────────────────────────────────
+  # JOB 6 — Notification déploiement
+  # ─────────────────────────────────────────────
+  notify:
+    name: Notification déploiement
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Notification succès
+        if: needs.deploy.result == 'success'
+        run: echo " Déploiement DIGITRANS-CM réussi sur AWS EC2 eu-west-3"
+
+      - name: Notification échec
+        if: needs.deploy.result == 'failure'
+        run: |
+          echo " Échec du déploiement DIGITRANS-CM sur AWS EC2"
+          exit 1
