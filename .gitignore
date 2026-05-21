@@ -1,0 +1,16 @@
+﻿target/
+*.jar
+*.war
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfvars
+*.csv
+*.pem
+*.key
+.env
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
