@@ -1,7 +1,9 @@
 ---
 name: CI/CD — Build, Test & Deploy
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 env:
   AWS_REGION: eu-west-3
