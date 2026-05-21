@@ -1,0 +1,33 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: bi-service
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: 6379
+
+services:
+  erp:
+    url: ${SERVICES_ERP_URL:http://localhost:8081}
+  crm:
+    url: ${SERVICES_CRM_URL:http://localhost:8082}
+  scm:
+    url: ${SERVICES_SCM_URL:http://localhost:8083}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html

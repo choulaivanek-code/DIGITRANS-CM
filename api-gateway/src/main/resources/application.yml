@@ -1,0 +1,82 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: 6379
+  cloud:
+    gateway:
+      routes:
+        # Auth Service Route (Public)
+        - id: auth-service
+          uri: ${SERVICES_AUTH_URL:http://localhost:8085}
+          predicates:
+            - Path=/api/auth/**
+
+        # ERP Service Route (Protected)
+        - id: erp-service
+          uri: ${SERVICES_ERP_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/employees/**, /api/financials/**, /api/suppliers/**
+          filters:
+            - JwtAuthentication
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+
+        # CRM Service Route (Protected)
+        - id: crm-service
+          uri: ${SERVICES_CRM_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/customers/**, /api/orders/**, /api/restaurants/**
+          filters:
+            - JwtAuthentication
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+
+        # Supply Chain Service Route (Protected)
+        - id: supply-chain-service
+          uri: ${SERVICES_SCM_URL:http://localhost:8083}
+          predicates:
+            - Path=/api/shipments/**, /api/tracking/**, /api/warehouses/**, /api/sync/**
+          filters:
+            - JwtAuthentication
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+
+        # BI Service Route (Protected)
+        - id: bi-service
+          uri: ${SERVICES_BI_URL:http://localhost:8084}
+          predicates:
+            - Path=/api/reports/**
+          filters:
+            - JwtAuthentication
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+
+jwt:
+  secret: ${JWT_SECRET:digitrans-cm-secret-key-2026-very-long-and-secure-agrocam-cm}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always

@@ -1,0 +1,90 @@
+name: CD — Déploiement AWS
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: af-south-1
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+
+jobs:
+  deploy:
+    name: Déploiement sur AWS EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Package Maven
+        run: mvn clean package -DskipTests
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build & Push toutes les images
+        run: |
+          services=("auth-service" "api-gateway" "erp-service" "crm-service" "supply-chain-service" "bi-service")
+          tags=("auth" "gateway" "erp" "crm" "scm" "bi")
+          for i in "${!services[@]}"; do
+            echo "Building ${services[$i]}..."
+            docker build -t ${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest ./${services[$i]}
+            docker push ${{ secrets.DOCKER_USERNAME }}/digitrans-${tags[$i]}:latest
+          done
+
+      - name: Déploiement sur EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/digitrans-cm
+
+            # Pull nouvelles images
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-auth:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-gateway:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-erp:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-crm:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-scm:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/digitrans-bi:latest
+
+            # Redémarre les conteneurs
+            docker-compose down
+            docker-compose up -d
+
+            echo "✅ Déploiement DIGITRANS-CM terminé"
+
+  notify:
+    name: Notification déploiement
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+
+    steps:
+      - name: Statut du déploiement
+        run: |
+          if [ "${{ needs.deploy.result }}" == "success" ]; then
+            echo "✅ Déploiement DIGITRANS-CM réussi sur AWS af-south-1"
+          else
+            echo "❌ Échec du déploiement DIGITRANS-CM"
+            exit 1
+          fi

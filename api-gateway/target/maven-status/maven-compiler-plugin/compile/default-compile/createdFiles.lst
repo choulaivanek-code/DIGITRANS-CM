@@ -1,0 +1,4 @@
+cm\agrocam\digitrans\gateway\filter\JwtAuthenticationFilter$Config.class
+cm\agrocam\digitrans\gateway\config\RateLimiterConfig.class
+cm\agrocam\digitrans\gateway\filter\JwtAuthenticationFilter.class
+cm\agrocam\digitrans\gateway\GatewayApplication.class

@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.0-alpine
+    container_name: digitrans-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - digitrans-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    ports:
+      - "8085:8085"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+      - JWT_EXPIRATION=86400000
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - digitrans-net
+
+  erp-service:
+    build: ./erp-service
+    container_name: erp-service
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/erp_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=
+      - SPRING_REDIS_HOST=redis
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - digitrans-net
+
+  crm-service:
+    build: ./crm-service
+    container_name: crm-service
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/crm_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=
+      - SPRING_REDIS_HOST=redis
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - digitrans-net
+
+  supply-chain-service:
+    build: ./supply-chain-service
+    container_name: supply-chain-service
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/scm_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=
+      - SPRING_REDIS_HOST=redis
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - digitrans-net
+
+  bi-service:
+    build: ./bi-service
+    container_name: bi-service
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_REDIS_HOST=redis
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+      - SERVICES_ERP_URL=http://erp-service:8081
+      - SERVICES_CRM_URL=http://crm-service:8082
+      - SERVICES_SCM_URL=http://supply-chain-service:8083
+    depends_on:
+      redis:
+        condition: service_healthy
+      erp-service:
+        condition: service_started
+      crm-service:
+        condition: service_started
+      supply-chain-service:
+        condition: service_started
+    networks:
+      - digitrans-net
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_REDIS_HOST=redis
+      - JWT_SECRET=digitrans-cm-secret-key-2026
+      - SERVICES_AUTH_URL=http://auth-service:8085
+      - SERVICES_ERP_URL=http://erp-service:8081
+      - SERVICES_CRM_URL=http://crm-service:8082
+      - SERVICES_SCM_URL=http://supply-chain-service:8083
+      - SERVICES_BI_URL=http://bi-service:8084
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      erp-service:
+        condition: service_started
+      crm-service:
+        condition: service_started
+      supply-chain-service:
+        condition: service_started
+      bi-service:
+        condition: service_started
+    networks:
+      - digitrans-net
+
+networks:
+  digitrans-net:
+    driver: bridge
+
+volumes:
+  redis-data:
